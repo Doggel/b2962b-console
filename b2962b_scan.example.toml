@@ -1,0 +1,56 @@
+# B2962B 扫描设置示例。复制为 b2962b_scan.toml 后可按需编辑。
+# 电压用 V，电流用 A，时间用秒。数值仅作示例，请按器件修改。
+# 从 Connection Expert 复制当前完整地址。空字符串表示自动搜索一台 B2962B。
+address = ""
+# false：独立通道，解除仪器原有分组。true：分组同步，需启用两路并匹配触发设置。
+group_channels = false
+
+[ch1]
+enabled = true
+source = "voltage"     # voltage 或 current
+mode = "linear"        # linear、log、list 或 fixed
+initial = 0.0           # 开输出时的电平，fixed 模式下也是固定偏置
+start = 0.0             # linear/log 生效。start > stop 表示反向
+stop = 0.1
+step = 0.01             # 线性扫描步长填正数（V 或 A），起止差必须能被步长整除。点数自动计算
+# points = 11           # 对数扫描填写点数。线性扫描中仅在省略 step 时使用
+round_trip = false      # true：用列表实现往返，折返点采一次，共 2 × 单程点数 − 1 点
+# values = [0.0, 0.03, 0.1, 0.03, 0.0]  # mode = "list" 时填写
+compliance = 0.001      # 电压源的限流 (A)，电流源的限压 (V)
+measure = ["voltage", "current"]
+wire = 2                # 4 需先接好 Kelvin 感测线
+nplc = 0.1             # 电压和电流共用，填 "auto" 或数值，例如 0.1、1
+
+[ch1.trigger]
+source = "AINT"         # 源步进触发：AINT、TIM、BUS、INT1/2 或 EXT1–EXT14
+acquire = "AINT"        # 测量触发，选项同上。BUS/EXT 等需相应触发事件
+source_delay_s = 0.0
+acquire_delay_s = 0.0
+repeat = 1              # 每次启动的 Arm 重复次数
+# period_s = 0.1        # 源或测量选 TIM 时必填；定时周期需容纳输出稳定和积分时间
+# source_count = 11     # 省略时等于源序列点数
+# acquire_count = 11    # 省略时等于源序列点数。固定偏置通道需多点采集时可显式设置
+
+# 取消下面三行注释可启用脉冲扫描。通常配合 TIM，并调整采集延时和积分时间，
+# 使采样落在脉冲平台期。initial 是脉冲底电平，扫描值是峰值。
+# [ch1.pulse]
+# delay_s = 0.001
+# width_s = 0.01
+
+[ch2]
+enabled = false         # 改为 true 才下发 CH2 参数
+source = "current"
+mode = "fixed"         # 示例：固定电流偏置
+initial = 0.00001
+compliance = 0.2
+measure = ["voltage", "current"]
+wire = 2
+nplc = 0.1
+
+[ch2.trigger]
+source = "AINT"
+acquire = "AINT"
+# 若要跟上方 CH1 的 11 点扫描分组，启用 CH2、将 group_channels 改为 true，
+# 并让 CH2 的两项 count 和其余触发条件与 CH1 相同。
+# source_count = 11
+# acquire_count = 11

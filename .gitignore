@@ -1,0 +1,15 @@
+.venv/
+.packages/
+__pycache__/
+*.py[cod]
+/build/
+/dist/
+*.exe
+*.lnk
+
+# Instrument settings, saved presets and results are local to each installation.
+*.toml
+!/b2962b_scan.example.toml
+*.csv
+/.b2962b_scan_form.json
+/.iv_export_folder
