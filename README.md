@@ -6,7 +6,7 @@
 
 **[下载 Windows x64 便携包](https://github.com/Doggel/b2962b-console/releases/latest/download/B2962B_Console_Windows_x64.zip)** · [查看所有版本](https://github.com/Doggel/b2962b-console/releases)
 
-本仓库是私有仓库，请用有仓库访问权限的 GitHub 账号下载。Release 的 **Assets** 中提供 `B2962B_Console_Windows_x64.zip`，包含 EXE、通用配置和第三方许可声明。
+Release 的 **Assets** 中提供 `B2962B_Console_Windows_x64.zip`，包含 EXE、通用配置和第三方许可声明。
 
 ## 使用方法
 
