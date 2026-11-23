@@ -1,4 +1,7 @@
-param([string]$Python = 'python')
+param(
+    [string]$Python = 'python',
+    [switch]$Portable
+)
 
 $ErrorActionPreference = 'Stop'
 Push-Location -LiteralPath $PSScriptRoot
@@ -10,6 +13,12 @@ try {
     $config = Join-Path $PSScriptRoot 'dist\b2962b_scan.toml'
     if (-not (Test-Path -LiteralPath $config)) {
         Copy-Item -LiteralPath 'b2962b_scan.example.toml' -Destination $config
+    }
+    if ($Portable) {
+        & $Python package_release.py
+        if ($LASTEXITCODE -ne 0) {
+            throw "Packaging failed with exit code $LASTEXITCODE"
+        }
     }
 }
 finally {

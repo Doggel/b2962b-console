@@ -1,25 +1,32 @@
 # B2962B 控制台
 
-用于 Keysight B2962B 的 Windows 桌面程序。可设置 CH1 和 CH2 的源模式、扫描和触发参数，控制通道输出，启动扫描，并将两路测量结果导出到同一个 CSV。扫描参数可以保存为 TOML，之后导入复用。
+## 软件简介
 
-## 连接仪器
+面向 Keysight B2962B 的 Windows x64 桌面程序。可设置 CH1 和 CH2 的源模式、扫描范围与触发条件，独立开关通道输出，启动扫描，并把两路测量结果导出到同一个 CSV。两路扫描参数可以保存为 TOML，下次直接导入。
 
-1. 安装 Keysight IO Libraries Suite，用 USB 连接 B2962B，并在 Connection Expert 中确认仪器可见。
-2. 将 `b2962b_scan.toml` 放在 EXE 或 Python 源码同一目录。`address = ""` 时会尝试自动查找一台 B2962B。若连接了多台仪器，填写 Connection Expert 显示的完整 VISA 地址。
-3. 启动 `B2962B_Console.exe`，检查界面顶部的连接状态。没有 Python 的电脑也可运行 EXE，仪器通信仍需本机安装 VISA。
+**[下载 Windows x64 便携包](https://github.com/Doggel/b2962b-console/releases/latest/download/B2962B_Console_Windows_x64.zip)** · [查看所有版本](https://github.com/Doggel/b2962b-console/releases)
 
-## 日常操作
+本仓库是私有仓库，请用有仓库访问权限的 GitHub 账号下载。Release 的 **Assets** 中提供 `B2962B_Console_Windows_x64.zip`，包含 EXE、通用配置和第三方许可声明。
 
-1. **设置参数**。打开「扫描参数」，在 CH1 和 CH2 标签页填写设置，勾选需要下发的通道。线性扫描优先填写步长，对数扫描填写点数。「预览点数」会检查扫描和触发设置。
-2. **保存或导入参数**。点击「保存参数」选择 TOML 文件名和位置。点击「导入参数」将文件中的值填回表单，确认后点「下发参数」。
-3. **开启输出并启动扫描**。核对源模式、初始值和限值，再开启所需通道。选择扫描通道后点击「启动扫描」。只用 CH2 提供固定偏置时，可以保持两路独立并只触发 CH1。需要同步分组时，两路都要启用且触发设置必须匹配。
-4. **导出数据**。扫描结束后选择保存位置和通道，再点击「导出 CSV」。每个通道的列顺序是 `Time`、`Voltage`、`Source`、`Current`。第一行为物理量，第二行为单位，第三行起为数据。电流以 mA 记录，`Source` 的单位随源模式使用 V 或 mA。
+## 使用方法
 
-主界面的「恢复默认参数」会在确认后复位仪器。扫描参数窗口中的「载入默认模板」只把模板填入表单。鼠标悬停在主要按钮上约 1 秒会显示说明。
+1. **下载并解压**。把 `B2962B_Console.exe` 和 `b2962b_scan.toml` 放在同一可写目录。EXE 可以直接启动，无需另装 Python。
+2. **连接仪器**。安装 64 位 Keysight IO Libraries Suite，用 USB 连接 B2962B，并在 Connection Expert 中确认仪器可见。配置中的 `address = ""` 会自动查找一台 B2962B。连接多台时，请填写目标仪器的完整 VISA 地址。 [Keysight 驱动下载](https://www.keysight.com/zz/en/lib/software-detail/computer-software/io-libraries-suite-downloads-2175637.html)
+3. **设置参数**。点击「扫描参数」，在 CH1 和 CH2 标签页设置源模式、扫描方式、限值和触发条件。线性扫描优先填步长，对数扫描填点数。勾选需要下发的通道，可以先点「预览点数」，再点「下发参数」。「保存参数」和「导入参数」用于复用 TOML 预设，导入后仍需确认并下发。
+4. **开启输出并启动扫描**。核对源模式、初始值和限值，开启所需通道，选择通道后点「启动扫描」。
+5. **导出数据**。扫描结束后选好通道和保存位置，点击「导出 CSV」。每路依次为 `Time`、`Voltage`、`Source`、`Current`。首行为列名，第二行为单位。电流用 mA，`Source` 按源模式使用 V 或 mA。
 
-## 从源码运行
+## 使用注意事项
 
-在 Windows 上使用 64 位 Python 3.11 或更高版本，包含随 Python 一起安装的 Tkinter。在 PowerShell 中执行：
+- 开启输出前请核对接线、源模式、输出范围和限流或限压。示例 TOML 的数值需要按实际器件调整。
+- CH2 只提供固定偏置、只采集 CH1 时，可让两路保持独立并只触发 CH1。需要同步分组时，两路都要勾选下发并匹配触发设置。逐点比较两路数据时，请核对各路时间列。
+- 再次启动扫描可能覆盖上一轮数据，请先导出。若导出提示数据格式错误，请在仪器 I/O 设置中选择 ASCII。
+- 「恢复默认参数」在确认后会复位整台仪器。「载入默认模板」只填充当前表单。
+- EXE 未做数字签名。若环境拦截未签名应用，可以从源码运行，或按所在机构的做法使用经签名的版本。报告问题时请避免上传带有仪器序列号、VISA 地址或未公开实验数据的文件。
+
+## 源码运行、更新和发布
+
+在 Windows PowerShell 中，用包含 Tkinter 的 64 位 Python 3.11 或更高版本创建虚拟环境。在仓库目录执行：
 
 ```powershell
 python -m venv .venv
@@ -30,21 +37,37 @@ if (-not (Test-Path b2962b_scan.toml)) {
 .\.venv\Scripts\pythonw.exe b2962b_desktop.pyw
 ```
 
-预览示例配置的 SCPI 命令，无需连接仪器：
+改好代码后，在仓库目录提交并推送，以下以修改 `b2962b_scan_form.py` 为例。首次推送时，请按 Git 的提示登录 GitHub。
 
 ```powershell
-.\.venv\Scripts\python.exe b2962b_configure.py b2962b_scan.example.toml --preview
+git status --short
+git add b2962b_scan_form.py
+git commit -m "Update scan settings form"
+git push origin main
 ```
 
-`visa_read_iv.py` 也可独立运行，用已安装的 64 位 VISA 读取仪器上已完成的扫描。它与图形界面共用 CSV 导出代码。
+**发布新的可下载版本**时，给已验证的提交创建一个新版本标签，然后推送标签。GitHub Actions 会在 Windows 上打包，并将 ZIP 发布到 Releases。下面以 `v1.0.1` 为例，后续请递增版本号。 [发布构建记录](https://github.com/Doggel/b2962b-console/actions/workflows/release.yml)
 
-## 打包 Windows EXE
+```powershell
+git tag v1.0.1
+git push origin v1.0.1
+```
 
-使用上述虚拟环境安装打包依赖，然后执行：
+也可以在 GitHub 打开 **Actions → Publish Windows release → Run workflow**，选择 `main` 并填写一个尚未使用的版本号。
+
+也可在本机生成相同结构的便携包。下面的命令把 ZIP 输出到 `dist\B2962B_Console_Windows_x64.zip`。打包使用通用模板，更新已安装的软件时可以保留原有的 `b2962b_scan.toml`。
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\build.ps1 -Python .\.venv\Scripts\python.exe
+.\build.ps1 -Python .\.venv\Scripts\python.exe -Portable
 ```
 
-将 `dist\B2962B_Console.exe` 和 `dist\b2962b_scan.toml` 一起复制到运行目录。打包会保留 `dist` 中已有的 TOML 配置。Git 仓库包含源码和通用模板，本机 VISA 地址、参数预设、CSV 和 EXE 产物保存在本地。
+## AI 声明
+
+项目在开发、代码整理和文档撰写中使用了 OpenAI Codex 辅助。AI 生成的内容可能存在错误。使用前请根据仪器手册和实验条件核对设置，并验证关键测量结果。
+
+## 版权与第三方声明
+
+项目维护者为 Doggel。项目代码和文档 © 2026 Doggel，保留依法享有的权利。发布包供有权访问仓库的用户下载和运行。如需复制、修改后再分发或将源码用于其他项目，请联系维护者获取相应授权。项目源码未采用通用开源许可证。
+
+随发布包分发的第三方组件适用各自的许可，相关声明放在 `third-party-licenses/`。Keysight 和 B2962B 是相关权利人的品牌与产品名称。本项目为独立工具，未获 Keysight 官方背书。

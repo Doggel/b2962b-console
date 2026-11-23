@@ -5,6 +5,7 @@ __pycache__/
 /build/
 /dist/
 *.exe
+*.zip
 *.lnk
 
 # Instrument settings, saved presets and results are local to each installation.
