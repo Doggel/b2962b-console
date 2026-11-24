@@ -4,7 +4,7 @@
 
 面向 Keysight B2962B 的 Windows x64 桌面程序。可设置 CH1 和 CH2 的源模式、扫描范围与触发条件，独立开关通道输出，启动扫描，并把两路测量结果导出到同一个 CSV。两路扫描参数可以保存为 TOML，下次直接导入。
 
-**[下载 Windows x64 便携包](https://github.com/Doggel/b2962b-console/releases/latest/download/B2962B_Console_Windows_x64.zip)** · [查看所有版本](https://github.com/Doggel/b2962b-console/releases)
+**[下载 Windows x64 便携包](https://github.com/Doggel/b2962b-console/releases/latest/download/B2962B_Console_Windows_x64.zip)** · [查看所有版本](https://github.com/Doggel/b2962b-console/releases) · [更新日志](CHANGELOG.md)
 
 Release 的 **Assets** 中提供 `B2962B_Console_Windows_x64.zip`，包含 EXE、通用配置和第三方许可声明。
 
@@ -13,7 +13,7 @@ Release 的 **Assets** 中提供 `B2962B_Console_Windows_x64.zip`，包含 EXE�
 1. **下载并解压**。把 `B2962B_Console.exe` 和 `b2962b_scan.toml` 放在同一可写目录。EXE 可以直接启动，无需另装 Python。
 2. **连接仪器**。安装 64 位 Keysight IO Libraries Suite，用 USB 连接 B2962B，并在 Connection Expert 中确认仪器可见。配置中的 `address = ""` 会自动查找一台 B2962B。连接多台时，请填写目标仪器的完整 VISA 地址。 [Keysight 驱动下载](https://www.keysight.com/zz/en/lib/software-detail/computer-software/io-libraries-suite-downloads-2175637.html)
 3. **设置参数**。点击「扫描参数」，在 CH1 和 CH2 标签页设置源模式、扫描方式、限值和触发条件。线性扫描优先填步长，对数扫描填点数。勾选需要下发的通道，可以先点「预览点数」，再点「下发参数」。「保存参数」和「导入参数」用于复用 TOML 预设，导入后仍需确认并下发。
-4. **开启输出并启动扫描**。核对源模式、初始值和限值，开启所需通道，选择通道后点「启动扫描」。
+4. **开启输出并启动扫描**。核对源模式、初始值和限值，开启所需通道，选择通道后点「启动扫描」。需要同时关闭两路时，点击主界面上的「关闭两路输出」。
 5. **导出数据**。扫描结束后选好通道和保存位置，点击「导出 CSV」。每路依次为 `Time`、`Voltage`、`Source`、`Current`。首行为列名，第二行为单位。电流用 mA，`Source` 按源模式使用 V 或 mA。
 
 ## 使用注意事项

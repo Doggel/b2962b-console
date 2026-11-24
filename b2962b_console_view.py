@@ -55,7 +55,7 @@ class ConsoleView:
         self.setup.pack(side='right', padx=(10, 7))
         Tooltip(self.setup, '打开双通道设置，可编辑扫描参数、导入或保存 TOML。')
 
-        output_row = self._section(content, '2', '开启通道输出')
+        output_row = self._section(content, '2', '通道输出')
         for index, channel in enumerate((1, 2)):
             output_row.columnconfigure(index, weight=1, uniform='outputs')
             card = ttk.Frame(output_row, style='Console.Channel.TFrame', padding=(10, 7))
@@ -71,6 +71,9 @@ class ConsoleView:
             Tooltip(on, f'核对源模式和初始值后开启 CH{channel} 输出。')
             Tooltip(off, f'关闭 CH{channel} 的仪器输出。')
             self.output_buttons[channel] = on, off
+        self.close_both = self._button(output_row, '关闭两路输出', actions['close_both'])
+        self.close_both.grid(row=1, column=0, columnspan=2, sticky='e', pady=(8, 0))
+        Tooltip(self.close_both, '关闭 CH1 和 CH2 的输出，并核对两路开关状态。')
 
         scan_row = self._section(content, '3', '启动扫描')
         ttk.Label(scan_row, text='扫描与导出通道', style='Console.Card.TLabel').pack(side='left', padx=(0, 8))

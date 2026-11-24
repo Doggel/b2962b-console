@@ -51,14 +51,15 @@ def connect():
             yield instrument, identity
 
 
+def read_output(instrument, channel):
+    reply = instrument.query(f':OUTP{channel}?').strip().upper()
+    if reply not in ('0', '1', 'OFF', 'ON'):
+        raise RuntimeError(f'CH{channel} 返回了无法识别的输出状态：{reply}')
+    return reply in ('1', 'ON')
+
+
 def read_outputs(instrument):
-    states = {}
-    for channel in CHANNELS:
-        reply = instrument.query(f':OUTP{channel}?').strip().upper()
-        if reply not in ('0', '1', 'OFF', 'ON'):
-            raise RuntimeError(f'CH{channel} 返回了无法识别的输出状态：{reply}')
-        states[channel] = reply in ('1', 'ON')
-    return states
+    return {channel: read_output(instrument, channel) for channel in CHANNELS}
 
 
 @dataclass(frozen=True)
@@ -103,6 +104,29 @@ def set_output(instrument, channel, enabled, confirmed=None):
         error = instrument.query(':SYST:ERR?').strip()
         raise RuntimeError(f'CH{channel} 的输出状态未达到预期。仪器错误队列：{error}')
     return states
+
+
+def close_both_outputs(instrument):
+    errors = {}
+    for channel in CHANNELS:
+        try:
+            instrument.write(f':OUTP{channel} OFF')
+        except Exception as error:
+            # A communication error on one write must not skip the other channel.
+            errors[channel] = str(error) or type(error).__name__
+
+    outputs, problems = {}, []
+    for channel in CHANNELS:
+        try:
+            outputs[channel] = read_output(instrument, channel)
+        except Exception as error:
+            outputs[channel] = None
+            problems.append(f'CH{channel} 状态未确认（{str(error) or type(error).__name__}）')
+        else:
+            if outputs[channel]:
+                detail = f'（{errors[channel]}）' if channel in errors else ''
+                problems.append(f'CH{channel} 仍开启{detail}')
+    return outputs, problems
 
 
 def scan_active(instrument):
@@ -213,7 +237,9 @@ def run_window():
         view.pick.configure(state='readonly' if not busy and idle and not device.grouped else 'disabled')
         view.start.configure(state='normal' if not busy and idle and all(outputs[ch] for ch in selected) else 'disabled')
         view.export.configure(state='normal' if not busy and idle else 'disabled')
-        outputs_off = idle and not any(outputs.values())
+        both_off = all(outputs.get(channel) is False for channel in CHANNELS)
+        view.close_both.configure(state='normal' if not busy and not both_off else 'disabled')
+        outputs_off = idle and both_off
         view.setup.configure(state='normal' if not busy and (device is None or outputs_off) else 'disabled')
         view.reset.configure(state='normal' if not busy and outputs_off else 'disabled')
         view.folder_entry.configure(state='disabled' if busy else 'normal')
@@ -226,7 +252,7 @@ def run_window():
         if device is not None and device.running and poll is None:
             poll = root.after(900, poll_status)
 
-    def show_result(result, message):
+    def show_result(result, message, *, error=False):
         nonlocal device
         device = result
         fields = device.identity.split(',')
@@ -236,7 +262,7 @@ def run_window():
         state = '扫描进行中或等待触发' if device.running else '仪器空闲'
         group = '双通道分组' if device.grouped else '通道独立'
         view.set_connection(f'已连接  {serial}'.strip(), f'{state}  ·  {group}', connected=True)
-        view.set_feedback(message)
+        view.set_feedback(message, error=error)
         show_states()
         schedule_poll()
 
@@ -354,6 +380,20 @@ def run_window():
         run(work, lambda result: show_result(result, f'CH{channel} 输出已{action}，仪器已确认'),
             f'正在{action} CH{channel} 输出…')
 
+    def request_close_both():
+        def work():
+            with connect() as (instrument, identity):
+                outputs, problems = close_both_outputs(instrument)
+                state = DeviceState(identity, outputs, scan_active(instrument), channels_grouped(instrument))
+                return state, problems
+
+        def done(result):
+            state, problems = result
+            message = '；'.join(problems) if problems else 'CH1 和 CH2 输出均已关闭，仪器已确认。'
+            show_result(state, message, error=bool(problems))
+
+        run(work, done, '正在关闭并核对两路输出…')
+
     def request_on(channel):
         def read_confirmation():
             with connect() as (instrument, identity):
@@ -421,6 +461,7 @@ def run_window():
     view = ConsoleView(root, TARGETS, preferred_folder(), {
         'refresh': refresh_status, 'setup': open_scan_settings, 'reset': request_reset,
         'on': request_on, 'off': lambda channel: switch(channel, False),
+        'close_both': request_close_both,
         'target_changed': lambda event: show_states(), 'start': start_scan, 'export': export_scan,
         'folder': choose_folder,
     })

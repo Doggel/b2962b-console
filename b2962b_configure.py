@@ -174,6 +174,8 @@ def channel_plan(ch, config):
         checks.append((f'{s}:LIST:{source}:POIN?', points))
     if mode == 'fixed':
         set_value(f'{s}:{source}:MODE', 'FIX')
+        # A source trigger switches a fixed channel to its separate triggered level.
+        set_value(f'{s}:{source}:TRIG', initial)
 
     trigger = table(config.get('trigger', {}), f'{label}.trigger',
                     'repeat source acquire source_count acquire_count period_s source_delay_s acquire_delay_s')
