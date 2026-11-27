@@ -2,7 +2,7 @@
 
 import argparse
 from contextlib import closing, contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 import math
 from pathlib import Path
@@ -167,6 +167,48 @@ def query_device():
         return read_device(instrument, identity)
 
 
+@dataclass(frozen=True)
+class ScanRun:
+    identity: str
+    totals: dict[int, int | None]
+    folder: Path | None
+    close_outputs: bool = False
+
+
+def acquisition_totals(instrument, channels):
+    def count(command):
+        reply = instrument.query(command).strip().upper()
+        if reply in ('INF', 'INFINITY'):
+            return 0
+        return max(0, int(reply))
+
+    totals = {}
+    for channel in channels:
+        total = count(f':ARM{channel}:ACQ:COUN?') * count(f':TRIG{channel}:ACQ:COUN?')
+        totals[channel] = total if 0 < total <= 100000 else None
+    return totals
+
+
+def buffer_counts(instrument, channels):
+    counts = {}
+    for channel in channels:
+        try:
+            count = int(instrument.query(f':SYST:DATA:QUAN? (@{channel})').strip())
+        except Exception:
+            # Some instrument states do not expose progress. Keep polling operation status.
+            continue
+        if 0 <= count <= 100000:
+            counts[channel] = count
+    return counts
+
+
+def observe_scan(scan):
+    with connect() as (instrument, identity):
+        state = read_device(instrument, identity)
+        counts = buffer_counts(instrument, scan.totals) if scan and scan.identity == identity else {}
+        return state, counts
+
+
 def initiate_scan(instrument, channels):
     if channels not in TARGETS.values():
         raise ValueError('请选择 CH1、CH2 或两路通道。')
@@ -227,29 +269,33 @@ def run_window():
     results = Queue()
     busy = False
     poll = None
+    polling = False
+    queued = None
+    tracked_scan = None
     draft = None
 
     def show_states():
-        view.refresh.configure(state='disabled' if busy else 'normal')
-        idle = device is not None and not device.running
+        controls_busy = busy and (not polling or queued is not None)
+        idle = device is not None and not device.running and tracked_scan is None
         outputs = device.outputs if device is not None else {}
         selected = TARGETS[view.target.get()]
-        view.pick.configure(state='readonly' if not busy and idle and not device.grouped else 'disabled')
-        view.start.configure(state='normal' if not busy and idle and all(outputs[ch] for ch in selected) else 'disabled')
-        view.export.configure(state='normal' if not busy and idle else 'disabled')
+        view.set_control(view.refresh, not controls_busy)
+        view.set_control(view.pick, not controls_busy and idle and not device.grouped, active_state='readonly')
+        view.set_control(view.start, not controls_busy and idle and all(outputs.get(ch) for ch in selected))
+        view.set_control(view.export, not controls_busy and idle)
         both_off = all(outputs.get(channel) is False for channel in CHANNELS)
-        view.close_both.configure(state='normal' if not busy and not both_off else 'disabled')
+        view.set_control(view.close_both, not controls_busy and not both_off)
         outputs_off = idle and both_off
-        view.setup.configure(state='normal' if not busy and (device is None or outputs_off) else 'disabled')
-        view.reset.configure(state='normal' if not busy and outputs_off else 'disabled')
-        view.folder_entry.configure(state='disabled' if busy else 'normal')
-        view.folder_button.configure(state='disabled' if busy else 'normal')
+        view.set_control(view.setup, not controls_busy and (outputs_off or (device is None and tracked_scan is None)))
+        view.set_control(view.reset, not controls_busy and outputs_off)
+        for control in (view.folder_entry, view.folder_button, view.auto_export_check, view.auto_close_check):
+            view.set_control(control, not controls_busy and tracked_scan is None)
         for channel in CHANNELS:
-            view.set_output(channel, outputs.get(channel), busy, idle)
+            view.set_output(channel, outputs.get(channel), controls_busy, idle)
 
     def schedule_poll():
         nonlocal poll
-        if device is not None and device.running and poll is None:
+        if poll is None and (tracked_scan is not None or (device is not None and device.running)):
             poll = root.after(900, poll_status)
 
     def show_result(result, message, *, error=False):
@@ -257,42 +303,61 @@ def run_window():
         device = result
         fields = device.identity.split(',')
         serial = fields[2].strip() if len(fields) > 2 else ''
-        if device.grouped:
+        if device.grouped and view.target.get() != 'CH1 + CH2':
             view.target.set('CH1 + CH2')
-        state = '扫描进行中或等待触发' if device.running else '仪器空闲'
-        group = '双通道分组' if device.grouped else '通道独立'
-        view.set_connection(f'已连接  {serial}'.strip(), f'{state}  ·  {group}', connected=True)
+        details = []
+        if device.running:
+            details.append('扫描进行中或等待触发')
+        if device.grouped:
+            details.append('双通道分组')
+        view.set_connection(f'已连接  {serial}'.strip(), '  ·  '.join(details), connected=True)
         view.set_feedback(message, error=error)
         show_states()
         schedule_poll()
 
-    def finish(callback):
-        nonlocal busy, device
+    def finish(callback, background):
+        nonlocal busy, polling, queued, device
         try:
             result, error = results.get_nowait()
         except Empty:
-            root.after(60, finish, callback)
+            root.after(60, finish, callback, background)
             return
         busy = False
+        polling = False
+        if queued is not None:
+            request, queued = queued, None
+            run(*request)
+            return
         if error:
-            device = None
-            view.set_connection('仪器状态未确认', '请刷新状态')
-            view.set_feedback(f'操作未确认：{error}', error=True)
-            show_states()
+            if background:
+                view.set_feedback('暂时无法读取扫描状态，正在重试。', error=True)
+            else:
+                device = None
+                view.set_connection('仪器状态未确认', '请刷新状态')
+                view.set_feedback(f'操作未确认：{error}', error=True)
+                show_states()
+            schedule_poll()
         else:
             callback(result)
 
-    def run(work, callback, pending=None):
-        nonlocal busy, poll
+    def run(work, callback, pending=None, *, background=False):
+        nonlocal busy, poll, polling, queued
         if busy:
+            if polling and not background and queued is None:
+                queued = work, callback, pending
+                if pending:
+                    view.set_feedback(pending)
+                show_states()
             return
         if poll is not None:
             root.after_cancel(poll)
             poll = None
         busy = True
+        polling = background
         if pending:
             view.set_feedback(pending)
-        show_states()
+        if not background:
+            show_states()
 
         def worker():
             try:
@@ -301,16 +366,53 @@ def run_window():
                 results.put((None, str(error) or type(error).__name__))
 
         Thread(target=worker, daemon=True).start()
-        root.after(60, finish, callback)
+        root.after(60, finish, callback, background)
+
+    def show_observation(observation, idle_message):
+        nonlocal tracked_scan
+        state, counts = observation
+        if tracked_scan is None:
+            show_result(state, '扫描进行中或等待触发…' if state.running else idle_message)
+            return
+        scan = tracked_scan
+        if state.identity != scan.identity:
+            tracked_scan = None
+            view.set_progress('本轮扫描的仪器连接已变化', outcome='incomplete')
+            show_result(state, '仪器已变化，无法执行本轮扫描的自动操作。', error=True)
+            return
+
+        labels = [f'CH{ch} 已采 {counts.get(ch, "—")}/{total or "—"} 点' for ch, total in scan.totals.items()]
+        percent = 0
+        if all(total and ch in counts for ch, total in scan.totals.items()):
+            percent = 100 * sum(min(total, counts[ch]) for ch, total in scan.totals.items()) / sum(scan.totals.values())
+        if state.running:
+            view.set_progress('  ·  '.join(labels), percent)
+            show_result(state, '扫描进行中或等待触发…')
+            return
+
+        tracked_scan = None
+        complete = all(total is not None and counts.get(ch) == total for ch, total in scan.totals.items())
+        if complete:
+            summary = '扫描完成'
+        elif any(total is not None and ch in counts and counts[ch] < total for ch, total in scan.totals.items()):
+            summary = '扫描结束，点数不足'
+        else:
+            summary = '扫描结束，点数未确认'
+        view.set_progress('  ·  '.join([summary, *labels]), percent,
+                          outcome='complete' if complete else 'incomplete')
+        finish_scan_actions(state, scan, summary, complete)
 
     def refresh_status():
-        run(query_device, lambda result: show_result(result, '已从仪器刷新状态'), '正在读取仪器状态…')
+        scan = tracked_scan
+        run(lambda: observe_scan(scan), lambda result: show_observation(result, '已从仪器刷新状态'),
+            '正在读取仪器状态…')
 
     def poll_status():
         nonlocal poll
         poll = None
-        run(query_device, lambda result: show_result(
-            result, '正在等待本轮扫描结束…' if result.running else '仪器空闲，可点「导出 CSV」。'))
+        scan = tracked_scan
+        run(lambda: observe_scan(scan), lambda result: show_observation(result, '仪器空闲，可点「导出 CSV」。'),
+            background=True)
 
     def open_scan_settings():
         nonlocal draft
@@ -367,6 +469,9 @@ def run_window():
         run(work, done, '正在复位仪器…')
 
     def switch(channel, enabled, expected_identity=None, confirmed=None):
+        if not enabled:
+            cancel_auto_export(channel)
+
         def work():
             with connect() as (instrument, identity):
                 if expected_identity is not None and identity != expected_identity:
@@ -381,6 +486,8 @@ def run_window():
             f'正在{action} CH{channel} 输出…')
 
     def request_close_both():
+        cancel_auto_export()
+
         def work():
             with connect() as (instrument, identity):
                 outputs, problems = close_both_outputs(instrument)
@@ -393,6 +500,11 @@ def run_window():
             show_result(state, message, error=bool(problems))
 
         run(work, done, '正在关闭并核对两路输出…')
+
+    def cancel_auto_export(channel=None):
+        nonlocal tracked_scan
+        if tracked_scan and (channel is None or channel in tracked_scan.totals):
+            tracked_scan = replace(tracked_scan, folder=None)
 
     def request_on(channel):
         def read_confirmation():
@@ -413,15 +525,29 @@ def run_window():
 
     def start_scan():
         selected = TARGETS[view.target.get()]
+        expected_identity = device.identity
+        close_outputs = view.auto_close_outputs.get()
+        try:
+            folder = resolve_folder(view.destination.get()) if view.auto_export.get() else None
+        except (OSError, ValueError) as error:
+            view.set_feedback(str(error), error=True)
+            return
 
         def work():
             with connect() as (instrument, identity):
+                if identity != expected_identity:
+                    raise RuntimeError('连接的仪器已变化，请刷新状态并重新核对。')
+                totals = acquisition_totals(instrument, selected)
                 initiate_scan(instrument, selected)
-                return read_device(instrument, identity)
+                return ScanRun(identity, totals, folder, close_outputs)
 
-        run(work, lambda result: show_result(
-            result, '已触发，正在等待扫描结束…' if result.running else '触发已执行，仪器空闲，可导出 CSV。'),
-            '正在启动扫描…')
+        def done(scan):
+            nonlocal tracked_scan
+            tracked_scan = scan
+            view.set_progress('  ·  '.join(f'CH{ch} 已采 0/{total or "—"} 点' for ch, total in scan.totals.items()))
+            show_result(replace(device, running=True), '已触发，正在读取扫描进度…')
+
+        run(work, done, '正在启动扫描…')
 
     def export_scan():
         selected = TARGETS[view.target.get()]
@@ -430,7 +556,6 @@ def run_window():
         except (OSError, ValueError) as error:
             view.set_feedback(str(error), error=True)
             return
-
         def work():
             with connect() as (instrument, identity):
                 instrument.timeout = 15000
@@ -439,15 +564,62 @@ def run_window():
 
         def done(result):
             readings, path = result
-            message = f'已保存：{path}' if path else '所选通道没有有效数据，未生成 CSV。'
-            if path:
-                try:
-                    FOLDER_PREF.write_text(str(folder), encoding='utf-8')
-                except OSError:
-                    message += '\n下次启动时可能需要重新选择保存位置。'
-            show_result(readings, message)
+            message = saved_export_message(path, folder, '已保存') if path else '所选通道没有有效数据，未生成 CSV。'
+            show_result(readings, message, error=path is None)
 
         run(work, done, '正在读取扫描结果…')
+
+    def saved_export_message(path, folder, label):
+        message = f'{label}：{path}'
+        try:
+            FOLDER_PREF.write_text(str(folder), encoding='utf-8')
+        except OSError:
+            message += '\n下次启动时可能需要重新选择保存位置。'
+        return message
+
+    def finish_scan_actions(state, scan, summary, complete):
+        # Shut down first. OUTP OFF preserves the acquired measurement buffer.
+        close_needed = scan.close_outputs and any(state.outputs.get(ch) is not False for ch in CHANNELS)
+        export_requested = complete and scan.folder is not None
+        if not close_needed and not export_requested:
+            closed = '两路输出均已关闭。' if scan.close_outputs else ''
+            show_result(state, f'{summary}。{closed}可点「导出 CSV」。', error=not complete)
+            return
+
+        def work():
+            with connect() as (instrument, identity):
+                if identity != scan.identity:
+                    raise RuntimeError('连接的仪器已变化，无法执行本轮扫描的自动操作。')
+                require_scan_idle(instrument)
+                outputs, problems = close_both_outputs(instrument) if close_needed else (state.outputs, [])
+                path = None
+                if export_requested:
+                    try:
+                        instrument.timeout = 15000
+                        if buffer_counts(instrument, scan.totals) != scan.totals:
+                            raise RuntimeError('仪器缓冲区点数已变化')
+                        path = export_completed(instrument, tuple(scan.totals), scan.folder)
+                        if path is None:
+                            raise RuntimeError('所选通道没有有效数据')
+                    except Exception as error:
+                        problems.append(f'自动导出失败：{str(error) or type(error).__name__}')
+                return replace(state, outputs=outputs), path, problems
+
+        def done(result):
+            readings, path, problems = result
+            messages = [f'{summary}。']
+            if scan.close_outputs and all(readings.outputs.get(ch) is False for ch in CHANNELS):
+                messages.append('两路输出均已关闭。')
+            if problems:
+                messages.append('；'.join(problems) + '。')
+            if path:
+                messages.append(saved_export_message(path, scan.folder, '已自动导出'))
+            else:
+                messages.append('可点「导出 CSV」。')
+            show_result(readings, ''.join(messages), error=bool(problems) or not complete)
+
+        pending = '正在关闭两路输出…' if close_needed else '正在自动导出 CSV…'
+        run(work, done, f'{summary}。{pending}')
 
     def choose_folder():
         try:
